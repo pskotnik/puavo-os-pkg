@@ -1,0 +1,4 @@
+Wireshark ist ein Netzwerkprotokoll-Analysator zum Mitschneiden und
+Untersuchen von Netzwerkverkehr. Dieses Paket ergänzt die grafische
+Oberfläche; die Kommandozeilenwerkzeuge (tshark, dumpcap) sind Teil des
+Systemabbilds.

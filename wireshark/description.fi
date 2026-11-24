@@ -1,0 +1,3 @@
+Wireshark on verkkoprotokolla-analysaattori verkkoliikenteen kaappaamiseen
+ja tutkimiseen. Tämä paketti lisää graafisen käyttöliittymän;
+komentorivityökalut (tshark, dumpcap) kuuluvat järjestelmäkuvaan.

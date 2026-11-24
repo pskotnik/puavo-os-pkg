@@ -1,0 +1,7 @@
+{
+  "puavo.pkg.wireshark.capture_access": {
+    "default": "root",
+    "description": "Who may capture packets live with Wireshark: root (only root), everyone, or group:NAME (group name or numeric GID)",
+    "typehint": "string"
+  }
+}

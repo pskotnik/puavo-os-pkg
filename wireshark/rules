@@ -1,0 +1,179 @@
+#!/bin/sh
+
+set -eu
+
+command=$1
+shift
+
+# Only the Qt GUI (wireshark-qt) is packaged here.  dumpcap, libwireshark
+# and friends, the data files, icons and MIME definitions come from
+# wireshark-common, which is in the Puavo OS image as a dependency of
+# tshark.  Keep this version in step with the tshark of the image.
+version='4.0.17-0+deb12u3'
+deb="wireshark-qt_${version}_amd64.deb"
+snapshot_sha1='187a955a1554e1b90b8d431aa36a5ae884c2a052'
+
+# Debian drops superseded versions from its pools, so fall back to
+# snapshot.debian.org, which keeps every version forever.
+upstream_urls="
+  https://deb.debian.org/debian/pool/main/w/wireshark/${deb}
+  https://security.debian.org/debian-security/pool/updates/main/w/wireshark/${deb}
+  https://snapshot.debian.org/file/${snapshot_sha1}/${deb}
+"
+
+wireshark_links='
+  /usr/bin/wireshark
+  /usr/share/applications/org.wireshark.Wireshark.desktop
+  /usr/share/man/man1/wireshark.1.gz
+'
+
+# Wireshark looks up dumpcap and mmdbresolve in the directory of its own
+# executable (/proc/self/exe), which is inside the upstream directory and
+# not /usr/bin, so these are linked there from the image.
+image_helpers='
+  /usr/bin/dumpcap
+  /usr/bin/mmdbresolve
+'
+
+dumpcap='/usr/bin/dumpcap'
+
+# Who may capture packets live, set with the puavo-conf key
+# puavo.pkg.wireshark.capture_access:
+#
+#   root         only root (the Debian default)
+#   everyone     every user
+#   group:NAME   members of group NAME (a group name or a numeric GID;
+#                use the GID for LDAP groups, as LDAP may not be
+#                reachable yet when this runs at boot)
+#
+# Opening and analysing capture files works for everyone in every mode.
+get_capture_access() {
+  puavo-conf puavo.pkg.wireshark.capture_access 2>/dev/null || true
+}
+
+dumpcap_is_default() {
+  [ "$(stat -c '%u:%g:%a' "$dumpcap")" = '0:0:755' ] \
+    && [ -z "$(getcap "$dumpcap" 2>/dev/null)" ]
+}
+
+# What the wireshark-common postinst does when only root may capture.
+reset_dumpcap() {
+  if dumpcap_is_default; then
+    return 0
+  fi
+  setcap -r "$dumpcap" 2>/dev/null || true
+  chown root:root "$dumpcap"
+  chmod u=rwx,go=rx "$dumpcap"
+}
+
+# Same as the wireshark-common postinst when non-root users may capture.
+# chown clears capabilities and the setuid bit, so it must come first.
+grant_capture() {
+  group=$1
+  mode=$2
+
+  if ! chown "root:${group}" "$dumpcap"; then
+    echo "wireshark: unknown group '${group}', only root can capture" >&2
+    reset_dumpcap
+    return 0
+  fi
+  chmod "$mode" "$dumpcap"
+  if ! setcap cap_net_raw,cap_net_admin=eip "$dumpcap"; then
+    echo 'wireshark: setcap failed, making dumpcap setuid root instead' >&2
+    chmod u+s "$dumpcap"
+  fi
+}
+
+configure_capture_access() {
+  # Leave dumpcap alone if the image has a dpkg-statoverride for it.
+  if dpkg-statoverride --list "$dumpcap" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  access=$(get_capture_access)
+  case "$access" in
+    ''|root)
+      reset_dumpcap
+      ;;
+    everyone)
+      grant_capture root 'u=rwx,go=rx'
+      ;;
+    group:?*)
+      grant_capture "${access#group:}" 'u=rwx,g=rx,o=r'
+      ;;
+    *)
+      echo "wireshark: invalid capture_access '${access}'," \
+           'only root can capture' >&2
+      reset_dumpcap
+      ;;
+  esac
+}
+
+case "${command}" in
+  configure)
+    upstream_dir=$1
+
+    for f in "$dumpcap" /usr/lib/x86_64-linux-gnu/libwireshark.so.16; do
+      if [ ! -e "$f" ]; then
+        echo "wireshark: ${f} is missing, the image needs tshark" >&2
+        exit 1
+      fi
+    done
+
+    for f in $wireshark_links; do
+      mkdir -p "$(dirname "$f")"
+      ln -fns -T "${upstream_dir}${f}" "$f"
+    done
+
+    configure_capture_access
+    ;;
+  unconfigure)
+    rm -f $wireshark_links
+    if [ -e "$dumpcap" ] \
+         && ! dpkg-statoverride --list "$dumpcap" >/dev/null 2>&1; then
+      reset_dumpcap
+    fi
+    ;;
+  unpack)
+    upstream_pack=$1
+    upstream_dir=$2
+
+    dpkg-deb -x "$upstream_pack" "$upstream_dir"
+    for f in $image_helpers; do
+      ln -fns -T "$f" "${upstream_dir}${f}"
+    done
+    ;;
+  download)
+    upstream_pack=$1
+    expected_sha384=$(cat upstream_pack_sha384sum)
+    network_failure=false
+
+    for url in $upstream_urls; do
+      if wget \
+           --no-use-server-timestamps \
+           --no-cookies \
+           --output-document "$upstream_pack" \
+           --progress=dot:mega \
+           "$url"; then
+        if printf '%s  %s\n' "$expected_sha384" "$upstream_pack" \
+             | sha384sum --check --status; then
+          exit 0
+        fi
+        echo "wireshark: checksum mismatch for ${url}" >&2
+      else
+        rc=$?
+        if [ "$rc" -eq 4 ]; then
+          network_failure=true
+        fi
+      fi
+    done
+
+    rm -f "$upstream_pack"
+    if $network_failure; then
+      exit 2
+    fi
+    exit 1
+    ;;
+  *)
+    ;;
+esac

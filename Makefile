@@ -148,6 +148,7 @@ packagedirs += wifiman-desktop
 packagedirs += wine-gecko
 packagedirs += wine-mono
 packagedirs += wine-mono-bookworm
+packagedirs += wireshark
 packagedirs += xeroxofficedriver
 packagedirs += xournalpp
 packagedirs += zoom

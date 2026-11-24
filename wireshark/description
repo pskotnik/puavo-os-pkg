@@ -1,0 +1,3 @@
+Wireshark is a network protocol analyzer for capturing and inspecting
+network traffic. This package adds the graphical user interface; the
+command line tools (tshark, dumpcap) are part of the system image.
